@@ -7,6 +7,8 @@ nothing. This adds it.
 Not affiliated with or endorsed by Anthropic. It patches a proprietary extension in
 place on your own machine.
 
+![Turn duration in the Claude Code panel](docs/both.png)
+
 ## What it adds
 
 - `Working for 1m 2s` next to the spinner while a turn runs.
