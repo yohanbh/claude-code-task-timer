@@ -1,4 +1,4 @@
-# claude-code-panel-patches
+# claude-code-task-timer
 
 Turn timers for the **Claude Code for VS Code** panel. The extension's
 `showTurnDuration` setting only renders in the terminal UI, so the panel shows
