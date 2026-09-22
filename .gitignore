@@ -1,5 +1,4 @@
 node_modules/
 *.orig
 PROMO.md
-docs/promo.png
-docs/screenshot.png
+docs/
