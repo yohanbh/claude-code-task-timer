@@ -48,6 +48,10 @@ comment above that anchor and update the regex.
 
 ## How it works
 
+Two files. `patch-claude-timer.js` finds the installs and rewrites the bundle;
+`panel-helper.js` is the code injected into the panel, kept separate so it reads as
+JavaScript rather than one long string.
+
 `PATCHES` holds one entry per edit: a regex `anchor` that must match once, a `replace`
 that rewrites it, and optional `prepend`ed code. The patches wrap the panel's own render
 function and read its existing state. They never write to the message array, which
