@@ -25,6 +25,11 @@ place on your own machine.
   while one runs. Natively the pill counts agents only and hides without any, so a shell
   running in the background looks like nothing is happening. The map already lists these
   tasks, so the click needs nothing.
+- The context-usage ring in the input footer, always, drawn to the real percentage.
+  Natively it appears only once half the context is used and has three fixed shapes, so
+  anything under 62.5% would draw half full. It stays hidden until the session's first
+  reply finishes, since the context window size is unknown before then. Clicking it opens
+  the same "Context usage" breakdown as `/context` instead of compacting.
 
 A message typed mid-turn does not split the timer, and reloading the window mid-turn
 does not reset it — the running turn's start is recovered from the transcript.

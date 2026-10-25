@@ -82,6 +82,16 @@ window.__ccPillLabel=(n)=>{
   const k=current?tasksOf(current):0,a=n+(n===1?" agent":" agents"),t=k+(k===1?" task":" tasks");
   return k?(n?a+" · "+t:t):a;
 };
+// The context ring's paths, drawn to the real percentage. Natively the ring has three fixed
+// shapes (50/75/99% used), so anything under 62.5% drew as a half ring. Same geometry as the
+// native ones: a circle of radius 5 at (10,10), the orange arc runs clockwise from the top,
+// and a faint track follows it after a 30° gap and stops 30° short of the top.
+window.__ccRing=(p)=>{
+  const pt=(a)=>{const r=a*Math.PI/180;return (10+5*Math.sin(r)).toFixed(3)+" "+(10-5*Math.cos(r)).toFixed(3)};
+  const arc=(a,b)=>"M"+pt(a)+"A5 5 0 "+(b-a>180?1:0)+" 1 "+pt(b);
+  const end=Math.max(1,Math.min(330,(+p||0)*3.6));
+  return {arc:arc(0,end),track:end+30<330?arc(end+30,330):null};
+};
 window.__ccPillDot=(d)=>d==="waiting"||d==="failed"||!current||!tasksOf(current)?d:"running";
 // Workflow-tool agents in the panel's own Agent map (the agents pill in the input footer).
 // The panel tracks only Agent-tool subagents there; a Workflow-tool run is one background task

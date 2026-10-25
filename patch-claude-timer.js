@@ -144,6 +144,42 @@ const PATCHES = [
     replace: (_m, shown, q, agents, label, fmt, count) =>
       `,${shown}=${q}!==void 0&&(${agents}.size>0||window.__ccTasks&&window.__ccTasks()>0),${label}=${shown}?(window.__ccPillLabel||${fmt})(${count}(${agents})):void 0`,
   },
+  {
+    // Always show the context-usage ring in the input footer. Natively it hides until half the
+    // context is used. It still hides while the window size is unknown (no reply has finished
+    // yet), when the computed limit is zero or negative and the ring would read a false 0%.
+    name: "context-ring",
+    // let Y=J>0?Math.min($/J*100,100):0,Q=sb1!==null?sb1:Y,z=100-Q;if(sb1===null){if(J===0)return null;if(z>=50)return null}
+    anchor: /if\(([\w$]+)===0\)return null;if\([\w$]+>=50\)return null\}/g,
+    replace: (_m, limit) => `if(${limit}<=0)return null}`,
+  },
+  {
+    // Draw that ring to the real percentage. Natively it picks one of three fixed shapes
+    // (50/75/99% used), which only made sense while it hid below 50%: at 8% it drew half full.
+    // The helper returns the orange arc and the faint track; without it the native shapes stay.
+    name: "context-ring-arc",
+    // function nv0({percentage:$,className:J}){let Z=Qv5($),X=Yv5[Z];return w("svg",{...children:[X&&F("path",{d:X,...}),F("path",{d:Xv5[Z],stroke:"var(--app-claude-clay-button-orange)",
+    anchor: /(\{percentage:([\w$]+),className:[\w$]+\}\)\{let ([\w$]+)=[\w$]+\(\2\),([\w$]+)=[\w$]+\[\3\];)(return [\w$]+\("svg",[^;]*?d:)([\w$]+\[\3\])(,stroke:"var\(--app-claude-clay-button-orange\)")/g,
+    replace: (_m, head, pct, _key, track, mid, arc, tail) =>
+      `${head}let __ccR=window.__ccRing?window.__ccRing(${pct}):null;if(__ccR)${track}=__ccR.track;${mid}__ccR?__ccR.arc:${arc}${tail}`,
+  },
+  {
+    // Clicking the ring opens the "Context usage" dialog that /context opens, instead of
+    // compacting. The dialog's open flag lives in the chat component, which hands its setter
+    // to the slash-command wiring; this keeps a copy on window for the ring to call.
+    name: "context-ring-opener",
+    // openContextDialog:()=>e5(!0),
+    anchor: /openContextDialog:(\(\)=>[\w$]+\(!0\)),/g,
+    replace: (_m, open) => `openContextDialog:(window.__ccOpenContext=${open}),`,
+  },
+  {
+    // ...and the ring's click and hover text. Without the opener it still compacts.
+    name: "context-ring-click",
+    // "aria-label":`${Math.round($)}% context used — click to compact`,onClick:J,...,hint:"Click to compact now."
+    anchor: /("aria-label":`\$\{Math\.round\([\w$]+\)\}% context used — )click to compact(`,onClick:)([\w$]+)(,[^;]*?hint:)"Click to compact now\."/g,
+    replace: (_m, label, onClick, compact, mid) =>
+      `${label}click for details${onClick}(e)=>window.__ccOpenContext?window.__ccOpenContext():${compact}(e)${mid}"Click for context usage details."`,
+  },
 ];
 
 // Every place the extension can be installed: WSL/remote server, a native
