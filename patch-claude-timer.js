@@ -20,25 +20,28 @@ const MARKER = "/*cc-local-patches*/";
 // must not reference anything from this script.
 const TIMER_HELPER = fs.readFileSync(path.join(__dirname, "panel-helper.js"), "utf8");
 
-// One entry per change. `anchor` must match exactly once in the bundle; names
-// there are minified and change every release, so match by shape and capture
-// them. `prepend` (optional) is code added once to the top of the bundle; wrap
-// it in try/catch so a bug in a patch can never stop the panel from loading.
+// One entry per change. `anchor` must match exactly once in the bundle (or exactly
+// `count` times, when set); names there are minified and change every release, so
+// match by shape and capture them. `prepend` (optional) is code added once to the
+// top of the bundle; wrap it in try/catch so a bug in a patch can never stop the
+// panel from loading.
 const PATCHES = [
   {
     // Live "Working for 1m 2s" in the main chat's spinner row.
     name: "turn-timer",
-    // let q7=$.busy.value&&!$.permissionRequests.value.length,U7=F("div",{className:x0.spinnerRow,
-    anchor: /let ([\w$]+)=([\w$]+)\.busy\.value&&!\2\.permissionRequests\.value\.length,([\w$]+)=([\w$]+)\("div",\{className:([\w$]+)\.spinnerRow,/g,
-    replace: (_m, flag, session, row, jsx, styles) =>
-      `let ${flag}=(window.__ccTurnTimer&&window.__ccTurnTimer(${session}),${session}.busy.value)&&!${session}.permissionRequests.value.length,${row}=${jsx}("div",{"data-cc-timer":"1",className:${styles}.spinnerRow,`,
+    // let t0=$.visiblyBusy.value&&!$.permissionRequests.value.length,N5=F("div",{className:f0.spinnerRow,
+    // (2.1.281 renamed busy to visiblyBusy here; the helper still subscribes to busy itself.)
+    anchor: /let ([\w$]+)=([\w$]+)\.(busy|visiblyBusy)\.value&&!\2\.permissionRequests\.value\.length,([\w$]+)=([\w$]+)\("div",\{className:([\w$]+)\.spinnerRow,/g,
+    replace: (_m, flag, session, busy, row, jsx, styles) =>
+      `let ${flag}=(window.__ccTurnTimer&&window.__ccTurnTimer(${session}),${session}.${busy}.value)&&!${session}.permissionRequests.value.length,${row}=${jsx}("div",{"data-cc-timer":"1",className:${styles}.spinnerRow,`,
     prepend: TIMER_HELPER,
   },
   {
     // Hand the helper the JSX factory, so it can wrap a row in a tooltip element.
     // var B1=mL0,F=Mk1,R=Mk1;
     name: "turn-jsx",
-    anchor: /var ([\w$]+)=([\w$]+),([\w$]+)=([\w$]+),([\w$]+)=\4;/g,
+    // The values must be identifiers: `var Z=0,X=0,Y=0;` elsewhere in the bundle matched too.
+    anchor: /var ([\w$]+)=([A-Za-z_$][\w$]*),([\w$]+)=([A-Za-z_$][\w$]*),([\w$]+)=\4;/g,
     replace: (m, b1, mL0, F, Mk1, R) =>
       `${m}window.__ccJsx=${F};`,
   },
@@ -48,22 +51,33 @@ const PATCHES = [
     // attachment, so it is the one marker that survives a reload. The row constructor
     // destructures a fixed option list, so the flag has to be threaded through both the
     // call site and the constructor or it is silently dropped.
+    // The reply's API usage rides along the same way, as ccUsage: replayed history keeps it,
+    // so turns with no recorded total can still count the main agent's tokens.
     name: "turn-queued",
-    // ...,foldedIntoTurn:B=!1,isSynthesizedByLoop:K=!1}){this.type=$,this.uuid=Z,...
-    anchor: /foldedIntoTurn:([\w$]+)=!1,isSynthesizedByLoop:([\w$]+)=!1\}\)\{this\.type=([\w$]+),/g,
-    replace: (_m, folded, loop, type) =>
-      `foldedIntoTurn:${folded}=!1,isSynthesizedByLoop:${loop}=!1,isQueuedCommand:__ccQ=!1}){this.isQueuedCommand=__ccQ,this.type=${type},`,
+    // ...,foldedIntoTurn:K=!1,isSynthesizedByLoop:D=!1,model:M,agentSender:P,statusAwayFromPrompt:j=!1}){this.type=$,...
+    // (2.1.285 added options after isSynthesizedByLoop, so any trailing ones are kept as they are.)
+    anchor: /foldedIntoTurn:([\w$]+)=!1,isSynthesizedByLoop:([\w$]+)=!1((?:,[\w$]+:[\w$]+(?:=![01])?)*)\}\)\{this\.type=([\w$]+),/g,
+    replace: (_m, folded, loop, rest, type) =>
+      `foldedIntoTurn:${folded}=!1,isSynthesizedByLoop:${loop}=!1${rest},isQueuedCommand:__ccQ=!1,ccUsage:__ccU}){this.isQueuedCommand=__ccQ,this.ccUsage=__ccU,this.type=${type},`,
   },
   {
-    // The call site that builds a row from a raw frame: pass the frame's flag through.
+    // The call site that builds a row from a raw frame: pass the frame's flag and usage through.
     name: "turn-queued-src",
     // return new dZ($.type,z,{uuid:$.uuid,foldedIntoTurn:J,betaMessageId:...
     anchor: /return new ([\w$]+)\(([\w$]+)\.type,([\w$]+),\{uuid:\2\.uuid,foldedIntoTurn:([\w$]+),/g,
     replace: (_m, cls, frame, content, folded) =>
-      `return new ${cls}(${frame}.type,${content},{uuid:${frame}.uuid,isQueuedCommand:${frame}.isQueuedCommand===!0,foldedIntoTurn:${folded},`,
+      `return new ${cls}(${frame}.type,${content},{uuid:${frame}.uuid,isQueuedCommand:${frame}.isQueuedCommand===!0,ccUsage:${frame}.type==="assistant"?${frame}.message.usage:void 0,foldedIntoTurn:${folded},`,
   },
   {
-    // "Worked for 1m 51s" under every finished turn in the chat history.
+    // Show the helper every frame from the CLI before the panel handles it. The result frame
+    // at the end of each turn carries the session's running token totals, subagents included.
+    name: "turn-tokens",
+    // processIncomingMessage($){if(this.loadFailed.peek())this.loadOvertaken();...
+    anchor: /processIncomingMessage\(([\w$]+)\)\{/g,
+    replace: (m, frame) => `${m}window.__ccFrame&&window.__ccFrame(this,${frame});`,
+  },
+  {
+    // "Worked for 1m 51s · 12k out · 1.4M total" under every finished turn in the chat history.
     name: "turn-history",
     // function fx($,J,Z,X,Y=!1,Q,G,z,q,U){let V=U?.readOnly??!1;if(J.isEmpty)return null;
     anchor: /function ([\w$]+)\(([\w$]+),([\w$]+),([\w$]+),([\w$]+),([\w$]+)=!1,([\w$]+),([\w$]+),([\w$]+),([\w$]+),([\w$]+)\)\{let ([\w$]+)=\11\?\.readOnly\?\?!1;if\(\3\.isEmpty\)return null;/g,
@@ -71,6 +85,64 @@ const PATCHES = [
       `function ${name}(...a){let r=${name}__cc(...a);return window.__ccTurnLabel?window.__ccTurnLabel(r,${name}__cc,a):r}` +
       m.replace(`function ${name}(`, () => `function ${name}__cc(`),
     prepend: TIMER_HELPER,
+  },
+  {
+    // Workflow-tool agents in the Agent map. Outside the session class, the places that read
+    // the map's agents are all for display: the map itself, the agents pill in the input footer,
+    // the check that shows that pill, the count logged when the map opens, and (from 2.1.304)
+    // the status line under a backgrounded Agent/SendMessage call in the chat. Each gets the
+    // helper's copy with the workflow agents added. The session's own reads (this.agentMapAgents)
+    // and any assignment are left alone, so the panel's state never holds them. Another read
+    // appearing in an update fails the count, so it gets looked at before it is patched.
+    name: "agent-map",
+    // let Z=$.agentMapAgents.value,X=pg($.permissionRequests.value);return F(hH5,{count:mg(Z),...
+    // ...,E1=$.agentMapAgents.value,R1=q!==void 0&&E1.size>0,...
+    anchor: /(?<![\w$.])(?!this\b)([\w$]+)\.agentMapAgents\.value(?!\s*=[^=])/g,
+    count: [4, 5],
+    replace: (_m, session) => `(window.__ccAgents?window.__ccAgents(${session}):${session}.agentMapAgents.value)`,
+    prepend: TIMER_HELPER,
+  },
+  {
+    // The map's transcript view reads an agent's transcript once and then follows the live rows
+    // the panel receives for Agent-tool subagents. A workflow agent's rows never reach the panel,
+    // so its entry carries ccRev, which changes while it works: reread when it does...
+    name: "agent-map-reread",
+    // ...return $.getSubagentTranscript(J.taskId,v).then(...)...},[$,J.taskId,U]);let A=$.messages.value,
+    anchor: /\},\[([\w$]+),([\w$]+)\.taskId,([\w$]+)\]\);let ([\w$]+)=\1\.messages\.value,/g,
+    replace: (_m, session, agent, retry, msgs) =>
+      `},[${session},${agent}.taskId,${retry},${agent}.ccRev]);let ${msgs}=${session}.messages.value,`,
+  },
+  {
+    // ...and on a reread, ask only for what was added since the last row it has. The panel
+    // already does that for its own retries; its first read stays a full one.
+    name: "agent-map-reread-from",
+    // v=U>0&&!D.current&&H1!==void 0&&typeof n?.uuid==="string"?{count:H1.length,uuid:n.uuid}:void 0,d=j.current.removed;return $.getSubagentTranscript(J.taskId,v)
+    anchor: /([\w$]+)=([\w$]+)>0(&&![\w$]+\.current&&[\w$]+!==void 0&&typeof [\w$]+\?\.uuid==="string"\?\{count:[\w$]+\.length,uuid:[\w$]+\.uuid\}:void 0,[\w$]+=[\w$]+\.current\.removed;return [\w$]+\.getSubagentTranscript\(([\w$]+)\.taskId,\1\))/g,
+    replace: (_m, from, retry, rest, agent) => `${from}=(${retry}>0||${agent}.ccRev!==void 0)${rest}`,
+  },
+  {
+    // The agents pill in the input footer: count the session's other background tasks (a shell
+    // running in the background) beside the agents in its label...
+    name: "tasks-pill-label",
+    // function Jf5({count:$,dot:J,onOpen:Z}){let X=oE1($),Y=Zf5(J);
+    anchor: /(\{count:([\w$]+),dot:([\w$]+),onOpen:[\w$]+\}\)\{let [\w$]+=)([\w$]+)(\(\2\),[\w$]+=[\w$]+\(\3\);)/g,
+    replace: (_m, head, _count, _dot, label, tail) => `${head}(window.__ccPillLabel||${label})${tail}`,
+  },
+  {
+    // ...light its dot while one runs...
+    name: "tasks-pill-dot",
+    // return F(Jf5,{count:Ll(Z),dot:iu1(Z,X),onOpen:J})
+    anchor: /(\{count:[\w$]+\(([\w$]+)\),dot:)([\w$]+\(\2,[\w$]+\))(,onOpen:[\w$]+\}\))/g,
+    replace: (_m, head, _agents, dot, tail) => `${head}(window.__ccPillDot||((d)=>d))(${dot})${tail}`,
+  },
+  {
+    // ...and show it when only such tasks are running. The label here feeds the footer's
+    // width measurement, so it takes the same label.
+    name: "tasks-pill-show",
+    // ,L1=q!==void 0&&h1.size>0,i1=L1?oE1(Ll(h1)):void 0
+    anchor: /,([\w$]+)=([\w$]+)!==void 0&&([\w$]+)\.size>0,([\w$]+)=\1\?([\w$]+)\(([\w$]+)\(\3\)\):void 0/g,
+    replace: (_m, shown, q, agents, label, fmt, count) =>
+      `,${shown}=${q}!==void 0&&(${agents}.size>0||window.__ccTasks&&window.__ccTasks()>0),${label}=${shown}?(window.__ccPillLabel||${fmt})(${count}(${agents})):void 0`,
   },
 ];
 
@@ -156,9 +228,11 @@ function patch(bundle) {
   const applied = [];
   for (const p of PATCHES) {
     const found = [...out.matchAll(p.anchor)].length;
-    if (found !== 1) {
+    const want = [].concat(p.count || 1);
+    if (!want.includes(found)) {
       process.exitCode = 1;
-      console.error(`SKIPPED      ${p.name}: expected exactly 1 anchor, found ${found}; the bundle changed, this patch needs updating`);
+      const n = want.join(" or ");
+      console.error(`SKIPPED      ${p.name}: expected exactly ${n} anchor${want.some((w) => w > 1) ? "s" : ""}, found ${found}; the bundle changed, this patch needs updating`);
       continue;
     }
     out = out.replace(p.anchor, p.replace);
