@@ -3,3 +3,4 @@ node_modules/
 PROMO.md
 docs/*
 !docs/both.png
+*.vsix

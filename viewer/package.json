@@ -1,0 +1,37 @@
+{
+  "name": "claude-subagent-viewer",
+  "displayName": "Claude Subagent Viewer",
+  "description": "Live view of Claude Code subagents, workflow agents included, read from their transcripts on disk.",
+  "version": "0.1.0",
+  "publisher": "yohanbh",
+  "license": "MIT",
+  "private": true,
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "main": "./extension.js",
+  "contributes": {
+    "views": {
+      "explorer": [
+        {
+          "id": "claudeSubagents",
+          "name": "Claude Subagents"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "claudeSubagents.open",
+        "title": "Open Subagent Transcript"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "claudeSubagents.open",
+          "when": "false"
+        }
+      ]
+    }
+  }
+}

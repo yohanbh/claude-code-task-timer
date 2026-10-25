@@ -1,0 +1,113 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<!-- Entries are added with textContent only, never as HTML, so inline styles are safe here. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-{{nonce}}';">
+<style>
+  body {
+    font-family: var(--vscode-font-family);
+    font-size: var(--vscode-font-size);
+    color: var(--vscode-foreground);
+    background: var(--vscode-editor-background);
+    line-height: 1.45;
+    padding: 0 16px 24px;
+  }
+  header {
+    position: sticky;
+    top: 0;
+    background: var(--vscode-editor-background);
+    border-bottom: 1px solid var(--vscode-panel-border);
+    padding: 10px 0 8px;
+  }
+  h1 { font-size: 1.15em; margin: 0; }
+  .file, .who, .label { font-size: 0.85em; opacity: 0.7; }
+  .file { word-break: break-all; }
+  .entry { margin: 12px 0; }
+  .who { text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 2px; }
+  .text { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .user .text { border-left: 3px solid var(--vscode-textLink-foreground); padding-left: 8px; }
+  details.user > summary { cursor: pointer; }
+  details.user[open] .preview { display: none; }
+  .preview { opacity: 0.85; }
+  details.tool { border: 1px solid var(--vscode-panel-border); border-radius: 4px; padding: 4px 8px; margin: 6px 0; }
+  details.tool > summary { cursor: pointer; }
+  .name { font-family: var(--vscode-editor-font-family); font-weight: 600; }
+  .error .name { color: var(--vscode-errorForeground); }
+  .pending::after { content: " …"; opacity: 0.7; }
+  pre {
+    font-family: var(--vscode-editor-font-family);
+    font-size: var(--vscode-editor-font-size);
+    background: var(--vscode-textCodeBlock-background);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    max-height: 400px;
+    overflow: auto;
+    padding: 6px 8px;
+    margin: 4px 0 8px;
+  }
+</style>
+</head>
+<body>
+<header><h1 id="title"></h1><div class="file" id="file"></div></header>
+<main id="log"></main>
+<script nonce="{{nonce}}">
+  const vscode = acquireVsCodeApi();
+  const log = document.getElementById("log");
+  const tools = new Map(); // tool_use id -> its box, so the result lands inside its call
+  let prompted = false;
+
+  const el = (tag, cls, text) => {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  };
+
+  function add(en) {
+    const call = en.kind === "result" && tools.get(en.id);
+    if (call) {
+      call.summary.classList.remove("pending");
+      if (en.error) call.box.classList.add("error");
+      call.box.append(el("div", "label", en.error ? "Error" : "Result"), el("pre", "", en.text || "(empty)"));
+      return;
+    }
+    // Workflow prompts run to pages, so long messages start collapsed to their opening words.
+    const long = en.kind === "user" && en.text.length > 400;
+    const box = el(en.kind === "tool" || long ? "details" : "div", `entry ${en.kind}`);
+    if (en.ts) box.title = new Date(en.ts).toLocaleString();
+    if (en.kind === "tool") {
+      const summary = el("summary", "pending");
+      summary.append(el("span", "name", en.name), " ", el("span", "", en.summary));
+      box.append(summary, el("div", "label", "Input"), el("pre", "", en.input));
+      tools.set(en.id, { box, summary });
+    } else {
+      const who = en.kind === "user" ? (prompted ? "Message" : "Prompt") : en.kind === "text" ? "Agent" : en.kind === "output" ? "Structured output" : "Tool result";
+      if (en.kind === "user") prompted = true;
+      const body = el(en.kind === "text" || en.kind === "user" ? "div" : "pre", "text", en.text);
+      if (long) {
+        const summary = el("summary");
+        summary.append(el("span", "who", who), " ", el("span", "preview", en.text.slice(0, 200).replace(/\s+/g, " ") + "…"));
+        box.append(summary, body);
+      } else box.append(el("div", "who", who), body);
+    }
+    log.append(box);
+  }
+
+  window.addEventListener("message", (e) => {
+    const m = e.data;
+    if (m.header) {
+      document.getElementById("title").textContent = m.header.title;
+      document.getElementById("file").textContent = m.header.file;
+    }
+    if (m.entries) {
+      // Follow new entries only while the reader is at the bottom.
+      const following = window.innerHeight + window.scrollY >= document.body.scrollHeight - 60;
+      for (const en of m.entries) add(en);
+      if (following) window.scrollTo(0, document.body.scrollHeight);
+    }
+  });
+  vscode.postMessage({ ready: true });
+</script>
+</body>
+</html>

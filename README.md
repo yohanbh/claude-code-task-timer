@@ -85,6 +85,43 @@ load through the panel's existing transcript request, which already finds workfl
 agents' files. Runs the panel never saw, such as those from before it was opened, are not
 shown.
 
+## Subagent viewer
+
+`viewer/` is a separate, small VS Code extension that adds a **Claude Subagents** view to
+the Explorer. It shows every subagent of the recent Claude Code sessions, including the
+agents of Workflow-tool runs (ultracode, dynamic workflows), which the panel never shows.
+
+- A tree of session → workflow run → phase → agent, with plain Agent-tool subagents
+  alongside the runs. Each agent shows its state, elapsed time, tokens and last tool,
+  updated every second while anything runs.
+- Clicking an agent opens its transcript in a tab that follows along live: prompt, the
+  agent's text, and each tool call with its input and result. Images are left out.
+
+```sh
+cd viewer
+npx @vscode/vsce package --no-dependencies --allow-missing-repository --skip-license
+code --install-extension claude-subagent-viewer-0.1.0.vsix
+```
+
+Drag the view next to the Claude panel to watch both. From WSL it reads the WSL and the
+Windows transcripts; on Windows it reads the Windows ones and those of running WSL distros.
+
+It patches nothing: it only reads the transcripts under `~/.claude/projects`, so Claude
+Code updates do not drop it. It reads them in a worker thread, so a slow `/mnt/c` never
+stalls the extension host the Claude panel shares. `node viewer/scan.js` prints the same
+index in the terminal.
+
+**What it covers.** Sessions whose transcript changed in the last 12 hours, newest 8.
+Figures for a running agent come from its transcript and match the run summary Claude
+writes when a run ends. Tokens are the size of the agent's latest request, as in that
+summary. An agent with no sign of finishing and no writes for 15 minutes shows as
+inactive, because an interrupted agent leaves no marker.
+
+**Next to the panel's Agent map.** The panel's **Agent map** (the agents pill in the
+input footer) lists Agent-tool subagents, and with the patches above, workflow agents too.
+This view also covers other sessions, runs from before the panel was opened, and agents'
+tool calls in full.
+
 ## License
 
 MIT, see `LICENSE`. Covers this script only. It contains no Anthropic code — it ships
