@@ -6,6 +6,7 @@
 const vscode = require("vscode");
 const crypto = require("crypto");
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
 const { Worker } = require("worker_threads");
 const { fmt, num } = require("./scan");
@@ -97,6 +98,7 @@ function activate(context) {
       tree.update(m.sessions);
     }
     if (m.entries) panels.get(m.file)?.webview.postMessage({ entries: m.entries });
+    if (m.map) mapPanel?.webview.postMessage(m.map);
     if (m.error) console.error(`[claude-subagent-viewer] ${m.error}`);
   });
   worker.on("error", (e) => console.error("[claude-subagent-viewer]", e));
@@ -125,10 +127,70 @@ function activate(context) {
     });
   };
 
+  // The live map of the newest Claude Code session, drawn with lot-map's own code (see mapview.js),
+  // in a window of its own that can go on another monitor.
+  let mapPanel;
+  const popOutMap = async () => {
+    if (mapPanel) return mapPanel.reveal();
+    const root = vscode.Uri.file(__dirname);
+    mapPanel = vscode.window.createWebviewPanel("claudeMap", "Claude Map", vscode.ViewColumn.Active, {
+      enableScripts: true,
+      retainContextWhenHidden: true,
+      localResourceRoots: [root],
+    });
+    const nonce = crypto.randomBytes(16).toString("hex");
+    mapPanel.webview.html = fs
+      .readFileSync(path.join(__dirname, "map.html"), "utf8")
+      .replace(/\{\{nonce\}\}/g, nonce)
+      .replace(/\{\{csp\}\}/g, mapPanel.webview.cspSource)
+      .replace(/\{\{view\}\}/g, mapPanel.webview.asWebviewUri(vscode.Uri.joinPath(root, "mapview.js")).toString());
+    // The page may load again (moving it to another window can reload it); each time it is ready,
+    // the worker replays the session to it from the start.
+    mapPanel.webview.onDidReceiveMessage((m) => {
+      if (!m.ready) return;
+      mapPanel.webview.postMessage({ contextWindow: vscode.workspace.getConfiguration("claudeMap").get("contextWindow") });
+      worker.postMessage({ map: true });
+    });
+    mapPanel.onDidDispose(() => {
+      mapPanel = undefined;
+      worker.postMessage({ map: false });
+    });
+    await vscode.commands.executeCommand("workbench.action.moveEditorToNewWindow");
+  };
+
+  // agent map (https://github.com/yohanbh/agentmap): a terminal app showing the board, agents and
+  // tokens of every Claude session. Like the map above, it opens in a window of its own. Here it is
+  // the Linux build in ~/.cargo/bin, so on Windows it runs inside WSL.
+  let agentMap;
+  const openAgentMap = async () => {
+    if (agentMap) return agentMap.show();
+    const bin = path.join(os.homedir(), ".cargo", "bin", "agentmap");
+    if (process.platform !== "win32" && !fs.existsSync(bin)) {
+      return vscode.window.showErrorMessage("agent map isn't installed. Run: cargo install --git https://github.com/yohanbh/agentmap");
+    }
+    // Made in the terminal panel, then moved with the terminal's own command, which moves the
+    // active terminal and nothing else. (Moving the active editor instead can catch whichever
+    // editor still has focus, and a terminal already in the editor area cannot be moved this way.)
+    agentMap = vscode.window.createTerminal({
+      name: "agent map",
+      iconPath: new vscode.ThemeIcon("type-hierarchy"),
+      location: vscode.TerminalLocation.Panel,
+      ...(process.platform === "win32" ? { shellPath: "wsl.exe", shellArgs: ["~/.cargo/bin/agentmap"] } : { shellPath: bin }),
+    });
+    agentMap.show();
+    for (let i = 0; i < 40 && vscode.window.activeTerminal !== agentMap; i++) await new Promise((r) => setTimeout(r, 50));
+    if (vscode.window.activeTerminal === agentMap) await vscode.commands.executeCommand("workbench.action.terminal.moveIntoNewWindow");
+  };
+
   context.subscriptions.push(
     view,
     view.onDidChangeVisibility((e) => worker.postMessage({ active: e.visible })),
     vscode.commands.registerCommand("claudeSubagents.open", open),
+    vscode.commands.registerCommand("claudeMap.popOut", popOutMap),
+    vscode.commands.registerCommand("claudeMap.agentMap", openAgentMap),
+    vscode.window.onDidCloseTerminal((t) => {
+      if (t === agentMap) agentMap = undefined;
+    }),
     { dispose: () => worker.terminate() },
   );
 }

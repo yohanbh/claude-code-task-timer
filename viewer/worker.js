@@ -5,20 +5,28 @@
 // In:  {active}  whether the tree is visible; the index is only refreshed while it is
 //      {open}    a transcript file to stream, from the start
 //      {close}   stop streaming it
+//      {map}     true: feed the popped-out map from the start of the newest session; false: stop
 // Out: {sessions}       the whole tree, whenever it changed or while anything is running
 //      {file, entries}  transcript entries added since the last message for that file
+//      {map}            the map's events since the last message, and the session when it changed
 //      {error}          a failed tick, for the extension host log
 
 const { parentPort } = require("worker_threads");
 const scan = require("./scan");
+const { MapFeed } = require("./mapfeed");
 
 const index = new scan.Index();
 const transcripts = new Map(); // file -> Tail
 let active = false;
 let wasLive = false;
+let feed = null; // the popped-out map's MapFeed, while it is open
 
 function tick() {
   try {
+    if (feed) {
+      const { session, events } = feed.tick();
+      if (session || events.length) parentPort.postMessage({ map: { session, events } });
+    }
     if (active) {
       const now = Date.now();
       const changed = index.refresh(now);
@@ -42,6 +50,8 @@ parentPort.on("message", (m) => {
   if ("active" in m) active = m.active;
   if (m.open) transcripts.set(m.open, new scan.Tail(m.open));
   if (m.close) transcripts.delete(m.close);
+  // A fresh feed replays the session from its start, for a page that just (re)loaded.
+  if ("map" in m) feed = m.map ? new MapFeed() : null;
   tick();
 });
 setInterval(tick, 1000);

@@ -2,7 +2,7 @@
   "name": "claude-subagent-viewer",
   "displayName": "Claude Subagent Viewer",
   "description": "Live view of Claude Code subagents, workflow agents included, read from their transcripts on disk.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "yohanbh",
   "license": "MIT",
   "private": true,
@@ -23,9 +23,41 @@
       {
         "command": "claudeSubagents.open",
         "title": "Open Subagent Transcript"
+      },
+      {
+        "command": "claudeMap.popOut",
+        "title": "Claude: Pop Out Map",
+        "icon": "$(type-hierarchy)"
+      },
+      {
+        "command": "claudeMap.agentMap",
+        "title": "Claude: Open Agent Map",
+        "icon": "$(terminal)"
       }
     ],
+    "configuration": {
+      "title": "Claude Map",
+      "properties": {
+        "claudeMap.contextWindow": {
+          "type": "number",
+          "default": 500000,
+          "description": "The context window, in tokens, that the popped-out map's context ring is measured against. Transcripts do not record it."
+        }
+      }
+    },
     "menus": {
+      "view/title": [
+        {
+          "command": "claudeMap.popOut",
+          "when": "view == claudeSubagents",
+          "group": "navigation"
+        },
+        {
+          "command": "claudeMap.agentMap",
+          "when": "view == claudeSubagents",
+          "group": "navigation"
+        }
+      ],
       "commandPalette": [
         {
           "command": "claudeSubagents.open",

@@ -270,8 +270,9 @@ function refreshRun(s, run, now, full) {
     }
   }
   // The run summary is written only when the run ends. It has everything, so from then on the
-  // transcripts no longer need reading, and the caller stops refreshing the run.
-  const sum = readJson(path.join(s.dir, "workflows", `${run.id}.json`));
+  // transcripts no longer need reading, and the caller stops refreshing the run. Until then each
+  // look is a failed open, so only full passes look.
+  const sum = full && readJson(path.join(s.dir, "workflows", `${run.id}.json`));
   if (sum) {
     run.summary = sum;
     run.name = sum.workflowName || run.name;
@@ -335,30 +336,27 @@ function runView(run, now) {
 function refreshSession(s, now, full) {
   let changed = false;
   const sub = path.join(s.dir, "subagents");
-  for (const f of list(sub)) {
+  // New agents and runs are looked for on full passes only; in between, only the known ones are read.
+  for (const f of full ? list(sub) : []) {
     const m = /^agent-(\w+)\.jsonl$/.exec(f);
-    if (!m) continue;
-    let a = s.plain.get(m[1]);
-    if (!a) {
-      a = newAgent(m[1], path.join(sub, f));
-      readMeta(a);
-      s.plain.set(a.id, a);
-      changed = true;
-    } else if (!full && settled(a, now)) continue;
+    if (!m || s.plain.has(m[1])) continue;
+    const a = newAgent(m[1], path.join(sub, f));
+    readMeta(a);
+    s.plain.set(a.id, a);
+    changed = true;
+  }
+  for (const a of s.plain.values()) {
+    if (!full && settled(a, now)) continue;
     changed = readAgent(a) || changed;
   }
-  for (const f of list(path.join(sub, "workflows"))) {
-    if (!f.startsWith("wf_")) continue;
-    let run = s.runs.get(f);
-    if (!run) {
-      const dir = path.join(sub, "workflows", f);
-      run = { id: f, dir, journal: new Tail(path.join(dir, "journal.jsonl")), agents: new Map(), summary: null, name: scriptName(s, f), mtime: 0 };
-      s.runs.set(f, run);
-      changed = true;
-    }
-    // A run with a summary has ended for good.
-    if (!run.summary) changed = refreshRun(s, run, now, full) || changed;
+  for (const f of full ? list(path.join(sub, "workflows")) : []) {
+    if (!f.startsWith("wf_") || s.runs.has(f)) continue;
+    const dir = path.join(sub, "workflows", f);
+    s.runs.set(f, { id: f, dir, journal: new Tail(path.join(dir, "journal.jsonl")), agents: new Map(), summary: null, name: scriptName(s, f), mtime: 0 });
+    changed = true;
   }
+  // A run with a summary has ended for good.
+  for (const run of s.runs.values()) if (!run.summary) changed = refreshRun(s, run, now, full) || changed;
   return changed;
 }
 
@@ -373,11 +371,13 @@ class Index {
     this.roots = roots || [];
     this.rootsAt = 0;
     this.foundAt = 0;
+    this.walkedAt = 0;
     this.sessions = new Map(); // session folder -> session
   }
 
   // Brings the index up to date. Returns true when anything was read. Every 5 s it does a full
-  // pass: it looks for new sessions and re-checks agents that looked finished.
+  // pass: it looks for new agents and re-checks agents that looked finished. Every 30 s it also
+  // walks every project folder for new sessions, which over /mnt/c is thousands of slow stats.
   refresh(now = Date.now()) {
     let changed = false;
     if (!this.fixedRoots && now - this.rootsAt > 60000) {
@@ -385,8 +385,11 @@ class Index {
       this.rootsAt = now;
     }
     const full = now - this.foundAt > 5000;
-    if (full) {
-      this.foundAt = now;
+    if (full) this.foundAt = now;
+    if (full && now - this.walkedAt <= 30000) {
+      for (const s of this.sessions.values()) s.mtime = stat(path.join(path.dirname(s.dir), `${s.id}.jsonl`))?.mtimeMs || s.mtime;
+    } else if (full) {
+      this.walkedAt = now;
       const found = this.recentSessions(now);
       const keep = new Set(found.map((s) => s.dir));
       for (const dir of this.sessions.keys()) {

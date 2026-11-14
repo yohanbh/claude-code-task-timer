@@ -1,0 +1,146 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src {{csp}}; style-src 'nonce-{{nonce}}'; img-src data:;"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style nonce="{{nonce}}">
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: var(--vscode-editor-background);
+        color: var(--vscode-foreground);
+        overflow: hidden;
+      }
+      body {
+        display: flex;
+        flex-direction: row;
+        font-family: var(--vscode-editor-font-family, monospace);
+        font-size: var(--vscode-editor-font-size, 13px);
+      }
+      #map {
+        flex: 1 1 auto;
+        min-width: 0;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        padding: 12px;
+      }
+      #map svg {
+        width: 100%;
+        height: 100%;
+      }
+      #split {
+        flex: 0 0 7px;
+        cursor: col-resize;
+        border-left: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+        touch-action: none;
+      }
+      #split:hover,
+      #split.dragging {
+        border-left: 2px solid var(--vscode-focusBorder);
+      }
+      #side {
+        flex: 0 0 auto;
+        width: 32vw;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        padding: 14px 16px 14px 8px;
+        box-sizing: border-box;
+      }
+      #top {
+        display: flex;
+        gap: 12px;
+        align-items: baseline;
+      }
+      #head {
+        flex: 1;
+        min-width: 0;
+        opacity: 0.55;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      #now {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        padding-bottom: 6px;
+        border-bottom: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+      }
+      #feed {
+        flex: 0 1 auto;
+        min-height: 0;
+        overflow-y: auto;
+      }
+      .row {
+        display: flex;
+        gap: 12px;
+        white-space: pre;
+        line-height: 1.6;
+      }
+      .label {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .time {
+        flex-shrink: 0;
+        min-width: 6ch;
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+      }
+      .dim,
+      .moment {
+        opacity: 0.6;
+      }
+      .hot {
+        color: #d97757;
+      }
+      .bad {
+        color: var(--vscode-errorForeground);
+      }
+      #more {
+        align-self: flex-start;
+      }
+      #more,
+      #refresh {
+        flex-shrink: 0;
+        background: none;
+        border: none;
+        padding: 2px 0;
+        font: inherit;
+        color: var(--vscode-textLink-foreground);
+        cursor: pointer;
+      }
+      #more:hover,
+      #refresh:hover {
+        text-decoration: underline;
+      }
+      #more[hidden] {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="map"></div>
+    <div id="split" title="Drag to resize; double-click to reset"></div>
+    <div id="side">
+      <div id="top">
+        <div id="head">waiting for a session…</div>
+        <button id="refresh" title="Find the newest session and draw it again from its start">Refresh</button>
+      </div>
+      <div id="now"></div>
+      <div id="feed"></div>
+      <button id="more" hidden></button>
+    </div>
+    <script type="module" src="{{view}}"></script>
+  </body>
+</html>

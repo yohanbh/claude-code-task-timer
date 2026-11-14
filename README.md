@@ -105,8 +105,22 @@ agents of Workflow-tool runs (ultracode, dynamic workflows), which the panel nev
 ```sh
 cd viewer
 npx @vscode/vsce package --no-dependencies --allow-missing-repository --skip-license
-code --install-extension claude-subagent-viewer-0.1.0.vsix
+code --install-extension claude-subagent-viewer-0.2.0.vsix
 ```
+
+**Pop out the map.** `Claude: Pop Out Map` (or the button on the Claude Subagents view)
+opens [lot-map](https://github.com/alexeyw/lot-map)'s live map of the newest session in a
+window of its own, for a second monitor. It is drawn by lot-map's own code, copied into
+`viewer/map/` by `node viewer/build-map.js <lot-map checkout>`, and fed from the
+transcripts instead of the plugin's hooks. So it lacks what only hooks see: a hook's
+refusal is read from the refused call's error, and the context ring is the latest
+request's size over `claudeMap.contextWindow` (default 500k tokens). When another session
+becomes the newest, the map moves to it once the one shown has been quiet for 15 s (it
+looks every 10 s, so within about 25 s).
+
+**Agent map.** `Claude: Open Agent Map` (the other button on the view) opens
+[agent map](https://github.com/yohanbh/agentmap), a terminal version that covers every
+session at once, in a window of its own. Install it from that repo first.
 
 Drag the view next to the Claude panel to watch both. From WSL it reads the WSL and the
 Windows transcripts; on Windows it reads the Windows ones and those of running WSL distros.
