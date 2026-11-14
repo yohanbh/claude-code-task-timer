@@ -92,6 +92,23 @@ window.__ccRing=(p)=>{
   const end=Math.max(1,Math.min(330,(+p||0)*3.6));
   return {arc:arc(0,end),track:end+30<330?arc(end+30,330):null};
 };
+// The window the ring measures against. The panel takes the model's own from each result frame
+// (1M for Fable), but an autoCompactWindow setting makes the CLI compact against a smaller one,
+// so the ring read about half the real usage. The data behind /context has the window in force
+// (rawMaxTokens): ask for it once per session and model window, then redraw the ring.
+const wins=new WeakMap();
+window.__ccWindow=(s,w)=>{try{
+  if(!(w>0))return w;
+  let c=wins.get(s);
+  if(!c||c.w!==w){
+    c={w,max:0};wins.set(s,c);
+    s.getContextUsage().then((r)=>{
+      const m=r&&r.usage&&r.usage.rawMaxTokens;
+      if(m>0&&m!==w){c.max=m;s.usageData.value={...s.usageData.value}}
+    }).catch(()=>{});
+  }
+  return c.max||w;
+}catch(e){return w}};
 window.__ccPillDot=(d)=>d==="waiting"||d==="failed"||!current||!tasksOf(current)?d:"running";
 // Workflow-tool agents in the panel's own Agent map (the agents pill in the input footer).
 // The panel tracks only Agent-tool subagents there; a Workflow-tool run is one background task
