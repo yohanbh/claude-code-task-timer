@@ -25,6 +25,12 @@ place on your own machine.
   while one runs. Natively the pill counts agents only and hides without any, so a shell
   running in the background looks like nothing is happening. The map already lists these
   tasks, so the click needs nothing.
+- Background tasks in the Agent map's tree, hanging below the row of the agent that started
+  them (agents branch to the side, tasks hang under), finished ones included until the window
+  reloads. While the tree has tasks its rows are top-aligned so the connectors meet. Clicking one
+  opens the panel's own task card with its live output, plus which agent started it and the
+  `$ command` it runs. Natively the map lists them flat under the tree, with nothing saying
+  who started them, and drops each one when it ends.
 - The context-usage ring in the input footer, always, drawn to the real percentage.
   Natively it appears only once half the context is used and has three fixed shapes, so
   anything under 62.5% would draw half full. It stays hidden until the session's first
@@ -89,6 +95,14 @@ those agents to a copy; the panel's own agent state is never written. Their tran
 load through the panel's existing transcript request, which already finds workflow
 agents' files. Runs the panel never saw, such as those from before it was opened, are not
 shown.
+
+Background tasks: the CLI's `task_started` and `background_tasks_changed` frames carry
+`parent_task_id` (the subagent that launched the task; absent for the main agent and for
+workflow agents) and the id of the launching tool call. The panel drops both; the helper
+keeps them and adds each task to the tree the map builds. The command comes from that tool
+call: the chat's own rows for the main agent, the subagent's transcript otherwise. A
+workflow agent's task is matched by finding the call in the transcripts of the workflow
+agents running when it started. Lookups run only while the map or a task card is open.
 
 ## Subagent viewer
 

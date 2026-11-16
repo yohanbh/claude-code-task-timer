@@ -224,6 +224,241 @@ window.__ccAgents=(s)=>{
     return map;
   }catch(e){return base}
 };
+// Background tasks (shells, Monitor watches) in the Agent map, each under the agent that started
+// it. Natively the map lists them flat under the tree, says nothing about who started them, and
+// drops each the moment it ends. The CLI does say: task_started and background_tasks_changed carry
+// parent_task_id, the task id of the subagent that launched the task (the key the map has for that
+// agent; absent for the main agent and for workflow agents), and task_started carries the id of
+// the launching tool call. The panel keeps neither. We do, and the task-tree patch adds each task
+// to the tree as a node under its agent, ended ones included until the panel reloads. A workflow
+// agent's task is matched by finding its tool call in the transcripts of the workflow agents that
+// were running when it started; until a task's agent is known it stays in the native flat list.
+// Clicking one opens the panel's own task card (which already shows the live output), with
+// "Started by" and the command added. Looked up only while the map or a card is open.
+{
+const books=new WeakMap(); // session -> {recs: Map(taskId -> record), sig, tick}
+const byId=new Map(); // taskId -> record, for the click and the card, which only have the id
+const book=(s)=>{
+  let b=books.get(s);
+  if(!b){let sig=null;try{sig=new s.agentMapAgents.constructor(0)}catch(e){}b={recs:new Map(),sig,tick:0};books.set(s,b)}
+  return b;
+};
+const bump=(b)=>{if(b.tick)return;b.tick=setTimeout(()=>{b.tick=0;try{if(b.sig)b.sig.value=b.sig.peek()+1}catch(e){}},100)};
+const own=(t)=>t&&t!=="local_agent"&&t!=="local_workflow";
+const rec=(s,b,id)=>{
+  let r=b.recs.get(id);
+  if(r)return r;
+  r={taskId:id,sid:sid(s),first:Date.now()};b.recs.set(id,r);byId.set(id,r);
+  // Every Bash call registers a task, foreground ones too; only background ones are shown.
+  if(b.recs.size>300)for(const [k,v] of b.recs){if(b.recs.size<=200)break;if(!v.bg||v.goneAt){b.recs.delete(k);byId.delete(k)}}
+  if(byId.size>1000)byId.delete(byId.keys().next().value);
+  return r;
+};
+window.__ccTaskFrame=(s,f)=>{try{
+  const st=f.subtype;
+  if(st==="background_tasks_changed"&&Array.isArray(f.tasks)){
+    const b=book(s),now=Date.now(),live=new Set();
+    for(const t of f.tasks){
+      if(!t||!t.task_id||!own(t.task_type))continue;
+      const r=rec(s,b,t.task_id);live.add(r.taskId);
+      // Seen here before task_started (or only here, after a reload): the start is a guess.
+      if(!r.startTime){r.startTime=now;r.guessStart=true}
+      r.bg=true;r.goneAt=0;r.taskType=t.task_type;
+      if(t.description)r.description=t.description;
+      if(t.parent_task_id)r.parent=t.parent_task_id;
+    }
+    for(const r of b.recs.values())if(r.bg&&!r.goneAt&&!live.has(r.taskId))r.goneAt=now;
+    bump(b);
+  }else if(st==="task_started"&&f.task_id&&own(f.task_type)){
+    const b=book(s),r=rec(s,b,f.task_id);
+    r.taskType=f.task_type;
+    if(f.description)r.description=f.description;
+    if(f.tool_use_id)r.toolUseId=f.tool_use_id;
+    if(f.parent_task_id)r.parent=f.parent_task_id;
+    // The CLI marks a shell started by any agent (subagent or workflow agent); a shell without
+    // the mark is the main agent's. Other kinds are never marked, so for them it says nothing.
+    r.owned=f.owned_by_subagent===true?true:f.task_type==="local_bash"?false:void 0;
+    if(!r.startTime||r.guessStart){r.startTime=Date.now();r.guessStart=false}
+    bump(b);
+  }else if((st==="task_notification"||st==="task_updated")&&f.task_id){
+    const b=books.get(s),r=b&&b.recs.get(f.task_id),status=ENDED[st==="task_notification"?f.status:f.patch&&f.patch.status];
+    if(!r||!status)return;
+    // The panel's own clock, as for the start: the CLI's end_time can come from WSL's clock.
+    r.status=status;r.endTime=r.endTime||Date.now();
+    bump(b);
+  }
+}catch(e){}};
+// The tool call that started a task: by its id, or (after a reload, when the id is gone) by the
+// tool result that names the task. Only calls with a command are looked at (Bash, PowerShell,
+// Monitor). Rows are the panel's, newest first; frames are transcript lines.
+const mentions=(v,id)=>{try{const t=typeof v==="string"?v:JSON.stringify(v==null?"":v);return t.length<500000&&t.includes(id)}catch(e){return false}};
+const isCall=(b)=>b&&b.type==="tool_use"&&b.input&&typeof b.input.command==="string";
+const callIn=(msgs,r)=>{
+  for(let i=msgs.length-1;i>=0;i--){
+    const m=msgs[i];if(!m||!Array.isArray(m.content))continue;
+    for(const c of m.content){
+      const b=c&&c.content;if(!isCall(b))continue;
+      if(r.toolUseId?b.id===r.toolUseId:mentions(c.toolResult&&(c.toolResult.peek?c.toolResult.peek():c.toolResult.value),r.taskId))return {row:m,call:b};
+    }
+  }
+  return null;
+};
+const blocks=(f)=>{const c=f&&f.message&&f.message.content;return Array.isArray(c)?c:[]};
+const callInFrames=(frames,r)=>{
+  let id=r.toolUseId;
+  if(!id)for(const f of frames){for(const b of blocks(f))if(b&&b.type==="tool_result"&&mentions(b.content,r.taskId)){id=b.tool_use_id;break}if(id)break}
+  if(id)for(const f of frames)for(const b of blocks(f))if(isCall(b)&&b.id===id)return {time:f.timestamp,call:b};
+  return null;
+};
+const take=(r,call,t)=>{
+  r.cmd=call.input.command;r.tool=call.name;
+  const v=typeof t==="number"?t:Date.parse(t);
+  if(r.guessStart&&isFinite(v)&&v<r.startTime)r.startTime=v;
+  r.guessStart=false;
+};
+// Workflow agents running when the task started: the only ones that can have started it.
+const candidates=(s,r)=>{
+  const f=flows.get(s),out=[];if(!f)return out;
+  const t=r.startTime||r.first;
+  for(const run of f.runs.values())for(const a of run.agents){
+    if(!a.agentId)continue;
+    const from=a.startedAt||a.queuedAt||run.startTime,to=a.state==="done"||a.state==="error"?from+(a.durationMs||0):Infinity;
+    if(from-60000<=t&&t<=to+60000)out.push(a.agentId);
+  }
+  return out.slice(0,12);
+};
+const found=(r)=>!!(r.cmd&&(r.parent||r.owner));
+const look=(s,b,r)=>{
+  if(found(r))return;
+  // The chat's own rows first: the main agent's calls, and a foreground subagent's.
+  const msgs=s.messages.peek();
+  if(!r.cmd&&r.scanned!==msgs&&(r.scans||0)<20){
+    r.scanned=msgs;r.scans=(r.scans||0)+1;
+    const hit=callIn(msgs,r);
+    if(hit){take(r,hit.call,at(hit.row));if(!r.parent&&top(hit.row))r.owner="main"}
+  }
+  if(!r.parent&&!r.owner&&r.owned===false)r.owner="main";
+  if(found(r)||r.asking||(r.tries||0)>=5||Date.now()-(r.askedAt||0)<5000)return;
+  // Then transcripts: the subagent that started it, or the workflow agents that may have.
+  const ids=r.parent?[r.parent]:r.owner?[]:candidates(s,r);
+  if(!ids.length)return;
+  r.asking=true;r.askedAt=Date.now();r.tries=(r.tries||0)+1;
+  Promise.all(ids.map((id)=>Promise.resolve().then(()=>s.getSubagentTranscript(id)).then((x)=>({id,frames:(x&&x.frames)||[]}),()=>({id,frames:[]})))).then((all)=>{
+    r.asking=false;
+    for(const x of all){const hit=callInFrames(x.frames,r);if(hit){take(r,hit.call,hit.time);if(!r.parent)r.owner=x.id;break}}
+    // A transcript can lag the call by a moment: look again shortly, a few times at most.
+    if(!found(r)&&r.tries<5)setTimeout(()=>bump(b),5000);
+    bump(b);
+  }).catch(()=>{r.asking=false});
+};
+const statusOf=(s,r)=>{
+  try{if(s.backgroundTasks.peek().has(r.taskId))return "working"}catch(e){}
+  if(r.status)return r.status;
+  return r.goneAt?"finished":"stopped";
+};
+const KIND={local_bash:"Shell",monitor_mcp:"Monitor",monitor_ws:"Monitor"};
+// Shaped like the panel's agent records, so the map's own row draws it: title, status dot, time.
+const entry=(s,r)=>{
+  const status=statusOf(s,r),live=status==="working";
+  const kind=r.tool==="Monitor"?"Monitor":KIND[r.taskType]||"Task";
+  return {taskId:r.taskId,description:kind+": "+(r.description||r.cmd||"background task"),taskType:r.taskType,status,isBackgrounded:true,
+    startTime:r.startTime||r.first,endTime:live?void 0:r.endTime||r.goneAt||Date.now(),usage:{totalTokens:0,toolUses:0},ccTask:true};
+};
+const order=(a,b)=>(a.status==="working")!==(b.status==="working")?(a.status==="working"?-1:1):(b.endTime||0)-(a.endTime||0)||b.startTime-a.startTime;
+// The map's tree (its own build of the agents), with each agent's tasks on its node as ccTasks, and
+// the main agent's on the list itself. The rows draw them hanging below (__ccUnder): agents branch
+// to the side, tasks hang under whoever started them. Tasks of an agent not in the tree are left
+// for the flat list.
+window.__ccTree=(s,roots)=>{try{
+  const b=books.get(s);if(!b||!b.recs.size)return roots;
+  const id=sid(s),nodes=new Map(),walk=(list)=>{for(const n of list)if(n&&n.agent){nodes.set(n.agent.taskId,n);walk(n.children||[])}};
+  walk(roots);
+  const out=roots.slice(),under=new Map();
+  for(const r of b.recs.values()){
+    r.placed=false;
+    if(!r.bg||(r.sid&&id&&r.sid!==id))continue;
+    look(s,b,r);
+    const owner=r.parent||r.owner,node=owner==="main"?out:nodes.get(owner);
+    if(!node)continue;
+    r.placed=true;
+    if(!under.has(node))under.set(node,[]);
+    under.get(node).push(entry(s,r));
+  }
+  for(const [node,list] of under)node.ccTasks=list.sort(order);
+  return out;
+}catch(e){return roots}};
+// A row with tasks hanging below it, each drawn by the map's own agent row. The map centres each
+// row on its branch of agents, which a list under the row would knock out of line with the
+// connectors, so while the tree holds any tasks it is drawn top-aligned instead: every row at the
+// top of its branch, the connectors at row height. Trees without tasks keep the native look.
+// Class names are the map's own (hashed per release), so the styles are built from them.
+let styled="";
+const styleFor=(cls)=>{
+  const key=cls.tree+cls.node;
+  if(styled!==key){
+    styled=key;
+    const T="."+cls.tree+":has(.cc-stack)",N="."+cls.node,C="."+cls.children,H="."+cls.child,mid="var(--cc-row-mid,23px)",line="var(--app-input-border)";
+    let el=document.getElementById("cc-task-styles");
+    if(!el){el=document.createElement("style");el.id="cc-task-styles";document.head.appendChild(el)}
+    el.textContent=[
+      T+" "+N+"{align-items:flex-start}",
+      T+" "+C+":before,"+T+" "+H+":before{top:"+mid+"}",
+      T+" "+H+":first-child:after{top:"+mid+"}",
+      T+" "+H+":last-child:after{top:0;bottom:auto;height:"+mid+"}",
+      ".cc-stack{flex-direction:column;align-items:flex-start}",
+      ".cc-stack.cc-main{position:sticky;z-index:1;top:0;bottom:0}",
+      ".cc-hang{display:flex;flex-direction:column;gap:8px;margin:8px 0 0 32px}",
+      // Indented by 32px, so 32px narrower than the row above (the map's rows are 300px, the
+      // session row 320px): the right edges line up and the connectors to the side still meet.
+      ".cc-hang "+N+">."+cls.row+"{width:268px}",
+      ".cc-main .cc-hang "+N+">."+cls.row+"{width:288px}",
+      ".cc-task{position:relative}",
+      ".cc-task:before,.cc-task:after{content:\"\";position:absolute;background:"+line+";left:-16px}",
+      ".cc-task:before{height:1px;width:16px;top:50%}",
+      ".cc-task:after{width:1px;top:-8px;bottom:-8px}",
+      ".cc-task:last-child:after{bottom:50%}",
+    ].join("\n");
+  }
+  // Rows are two lines high; measure one so the connectors meet its middle at any font size.
+  requestAnimationFrame(()=>{try{
+    const row=document.querySelector("."+cls.tree+" ."+cls.row);
+    if(row&&row.offsetHeight)document.documentElement.style.setProperty("--cc-row-mid",row.offsetHeight/2+"px");
+  }catch(e){}});
+};
+window.__ccUnder=(row,tasks,jsx,Row,cls,waiting,pick,main)=>{try{
+  if(!tasks||!tasks.length||!jsx||!Row||!cls||!cls.node)return row;
+  styleFor(cls);
+  return jsx("div",{className:cls.node+" cc-stack"+(main?" cc-main":""),children:[row,
+    jsx("div",{className:"cc-hang",children:tasks.map((t)=>jsx("div",{className:"cc-task",children:
+      jsx("div",{className:cls.node,children:jsx(Row,{agent:t,waiting,onClick:()=>pick(t.taskId)})})},t.taskId))})]});
+}catch(e){return row}};
+// Read by the map while it renders, so it redraws when a task changes or a lookup lands.
+window.__ccTaskVer=(s)=>{try{const b=book(s);return b.sig?b.sig.value:0}catch(e){return 0}};
+// A click on a task's node opens the task card instead of an agent card.
+window.__ccTaskPick=(key)=>{const r=byId.get(key);return r&&r.bg?{kind:"task",taskId:key}:null};
+// The flat list keeps only the tasks the tree could not place.
+window.__ccLoose=(tasks)=>{try{
+  let out=null;
+  for(const k of tasks.keys()){const r=byId.get(k);if(r&&r.placed){out=out||new Map(tasks);out.delete(k)}}
+  return out||tasks;
+}catch(e){return tasks}};
+// The card of a task that ended before it was opened: the panel no longer has it.
+window.__ccTaskRec=(id)=>{const r=byId.get(id);return r&&r.bg?{taskId:id,taskType:r.taskType,description:r.description}:void 0};
+// Added to the task card: who started it, and the command it runs.
+window.__ccTaskInfo=(s,task,jsx,cls)=>{try{
+  const b=books.get(s),r=b&&task&&b.recs.get(task.taskId);
+  if(!r)return null;
+  if(b.sig)b.sig.value; // redraw the card when the lookup lands
+  look(s,b,r);
+  const out=[],owner=r.parent||r.owner;
+  if(owner){
+    const a=owner==="main"?null:(window.__ccAgents?window.__ccAgents(s):s.agentMapAgents.peek()).get(owner);
+    out.push(jsx("div",{className:cls.meta,children:["Started by ",owner==="main"?"the main agent":a?a.description:"a subagent"]},"cc-by"));
+  }
+  if(r.cmd)out.push(jsx("pre",{className:cls.prompt,children:"$ "+r.cmd},"cc-cmd"));
+  return out;
+}catch(e){return null}};
+}
 // Once the turn's prompt is known: a record already there means the turn began before a
 // reload, and its starting total is the right one; otherwise record ours.
 const keep=(st)=>{const r=load(TK+st.key);if(r&&r.b)st.base=r.b;else if(st.base)save(TK+st.key,{b:st.base})};
@@ -236,7 +471,7 @@ const begin=(s,st,key)=>{
 };
 // Called with every frame from the CLI, before the panel handles it.
 window.__ccFrame=(s,f)=>{try{
-  if(f&&f.type==="system")workflowFrame(s,f);
+  if(f&&f.type==="system"){workflowFrame(s,f);if(window.__ccTaskFrame)window.__ccTaskFrame(s,f)}
   if(!f||f.type!=="result"||!f.modelUsage)return;
   const c=fromModels(f.modelUsage),st=sessions.get(s),id=sid(s);
   if(id)save(SK+id,{c});

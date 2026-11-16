@@ -145,6 +145,69 @@ const PATCHES = [
       `,${shown}=${q}!==void 0&&(${agents}.size>0||window.__ccTasks&&window.__ccTasks()>0),${label}=${shown}?(window.__ccPillLabel||${fmt})(${count}(${agents})):void 0`,
   },
   {
+    // Background tasks in the Agent map's tree, hanging below the row of the agent that started
+    // them (the main agent's below the session row): agents branch to the side, tasks hang under.
+    // The helper puts each agent's tasks on its node in the tree the map builds from its agents,
+    // and redraws when its task records change...
+    name: "task-tree",
+    // function iNt({session:e,context:t,renderTranscriptRow:n,onClose:i,agents:o,tasks:r}){It();let[s,a]=B(null),l=C8(e.permissionRequests.value),c=Rt(()=>y$e(o),[o]),
+    anchor: /(\{session:([\w$]+),context:[\w$]+,renderTranscriptRow:[\w$]+,onClose:[\w$]+,agents:([\w$]+),tasks:([\w$]+)\}\)\{[^{}]*?,[\w$]+=)([\w$]+)\(\(\)=>([\w$]+)\(\3\),\[\3\]\)/g,
+    replace: (_m, head, session, agents, tasks, memo, build) =>
+      `${head}${memo}(()=>(window.__ccTree||((s,t)=>t))(${session},${build}(${agents})),[${agents},${tasks},window.__ccTaskVer?window.__ccTaskVer(${session}):0])`,
+  },
+  {
+    // ...the session row draws the main agent's tasks below itself. The agent row component is
+    // the one the next function (each agent's node) uses, found ahead in the bundle...
+    name: "task-under-main",
+    // k("div",{className:xi.node,children:[m(qRn,{session:e,onClick:()=>a({kind:"main"})}),c.length>0&&m("div",{className:xi.children,children:c.map((h)=>m(lNt,{node:h,waiting:l,
+    //   ...}function lNt({node:e,waiting:t,onSelect:n}){return m("div",{className:xi.child,children:k("div",{className:xi.node,children:[m(jRn,{agent:
+    anchor: /(\{className:([\w$]+)\.node,children:\[)(([\w$]+)\([\w$]+,\{session:[\w$]+,onClick:\(\)=>([\w$]+)\(\{kind:"main"\}\)\}\))(,([\w$]+)\.length>0&&\4\("div",\{className:\2\.children,children:\7\.map\(\(([\w$]+)\)=>\4\([\w$]+,\{node:\8,waiting:([\w$]+),)(?=[^]*?\{node:[\w$]+,waiting:[\w$]+,onSelect:[\w$]+\}\)\{return \4\("div",\{className:\2\.child,children:[\w$]+\("div",\{className:\2\.node,children:\[\4\(([\w$]+),\{agent:)/g,
+    replace: (_m, head, cls, row, jsx, select, tail, tree, _h, waiting, agentRow) =>
+      `${head}((__ccR)=>window.__ccUnder?window.__ccUnder(__ccR,${tree}.ccTasks,${jsx},${agentRow},${cls},${waiting},(__ccId)=>${select}({kind:"task",taskId:__ccId}),!0):__ccR)(${row})${tail}`,
+  },
+  {
+    // ...each agent's row draws that agent's tasks below itself...
+    name: "task-under-agent",
+    // function lNt({node:e,waiting:t,onSelect:n}){return m("div",{className:xi.child,children:k("div",{className:xi.node,children:[m(jRn,{agent:e.agent,waiting:t,onClick:()=>n(sNt(e.agent))}),
+    anchor: /(\{node:([\w$]+),waiting:([\w$]+),onSelect:([\w$]+)\}\)\{return ([\w$]+)\("div",\{className:([\w$]+)\.child,children:[\w$]+\("div",\{className:\6\.node,children:\[)(\5\(([\w$]+),\{agent:\2\.agent,waiting:\3,onClick:\(\)=>\4\([\w$]+\(\2\.agent\)\)\}\))/g,
+    replace: (_m, head, node, waiting, select, jsx, cls, row, agentRow) =>
+      `${head}((__ccR)=>window.__ccUnder?window.__ccUnder(__ccR,${node}.ccTasks,${jsx},${agentRow},${cls},${waiting},${select},!1):__ccR)(${row})`,
+  },
+  {
+    // ...a click on a task's row opens the task card, not an agent card...
+    name: "task-pick",
+    // onSelect:(p)=>a({kind:"agent",key:p})
+    anchor: /onSelect:\(([\w$]+)\)=>([\w$]+)\(\{kind:"agent",key:\1\}\)/g,
+    replace: (_m, key, select) =>
+      `onSelect:(${key})=>${select}(window.__ccTaskPick&&window.__ccTaskPick(${key})||{kind:"agent",key:${key}})`,
+  },
+  {
+    // ...the flat list under the tree keeps only the tasks whose agent is not known yet...
+    name: "task-loose",
+    // r.size>0&&m(QRn,{tasks:r,onSelect:(h)=>a({kind:"task",taskId:h})})
+    anchor: /([\w$]+)\.size>0&&([\w$]+)\(([\w$]+),\{tasks:\1,onSelect:/g,
+    replace: (_m, tasks, jsx, list) =>
+      `(window.__ccLoose?window.__ccLoose(${tasks}):${tasks}).size>0&&${jsx}(${list},{tasks:window.__ccLoose?window.__ccLoose(${tasks}):${tasks},onSelect:`,
+  },
+  {
+    // ...the card of a task that ended before it was opened still opens (natively it is blank,
+    // since the panel forgets a task when it ends)...
+    name: "task-card-rec",
+    // {session:e,taskId:t,live:n,showOutput:i,onBack:o}){It();let r=K(n);Z(()=>{if(n!==void 0)r.current=n},[n]);let s=n??r.current,
+    anchor: /(\{session:[\w$]+,taskId:([\w$]+),live:([\w$]+),showOutput:[\w$]+,onBack:[\w$]+\}\)\{[\w$]+\(\);let ([\w$]+)=[\w$]+\(\3\);[\w$]+\(\(\)=>\{if\(\3!==void 0\)\4\.current=\3\},\[\3\]\);let [\w$]+=\3\?\?\4\.current)(,)/g,
+    replace: (_m, head, taskId, _live, _ref, tail) =>
+      `${head}??(window.__ccTaskRec?window.__ccTaskRec(${taskId}):void 0)${tail}`,
+  },
+  {
+    // ...and the card says which agent started the task and shows the command it runs, above
+    // the live output the card already has.
+    name: "task-card-info",
+    // k("div",{className:xi.meta,children:[_," · ",m(hNt,{task:s,endedAt:f})]}),i&&s.taskType==="local_bash"&&m(zae,{session:e,taskId:s.taskId,
+    anchor: /(\{className:([\w$]+)\.meta,children:\[[\w$]+," · ",[\w$]+\([\w$]+,\{task:([\w$]+),endedAt:[\w$]+\}\)\]\}\),)([\w$]+&&\3\.taskType==="local_bash"&&([\w$]+)\([\w$]+,\{session:([\w$]+),taskId:\3\.taskId,)/g,
+    replace: (_m, head, cls, task, rest, jsx, session) =>
+      `${head}(window.__ccTaskInfo?window.__ccTaskInfo(${session},${task},${jsx},${cls}):null),${rest}`,
+  },
+  {
     // Always show the context-usage ring in the input footer. Natively it hides until half the
     // context is used. It still hides while the window size is unknown (no reply has finished
     // in this session and the helper has none remembered), when the computed limit is zero or
