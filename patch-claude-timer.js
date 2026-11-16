@@ -147,7 +147,8 @@ const PATCHES = [
   {
     // Always show the context-usage ring in the input footer. Natively it hides until half the
     // context is used. It still hides while the window size is unknown (no reply has finished
-    // yet), when the computed limit is zero or negative and the ring would read a false 0%.
+    // in this session and the helper has none remembered), when the computed limit is zero or
+    // negative and the ring would read a false 0%.
     name: "context-ring",
     // let Y=J>0?Math.min($/J*100,100):0,Q=sb1!==null?sb1:Y,z=100-Q;if(sb1===null){if(J===0)return null;if(z>=50)return null}
     // 2.1.318 dropped the override block: ...,r=100-o;if(t===0)return null;if(r>=50)return null;return
@@ -156,12 +157,14 @@ const PATCHES = [
   },
   {
     // Measure the ring against the window auto-compact really uses. The panel only knows the
-    // model's own window, so with an autoCompactWindow setting it read far too low.
+    // model's own window, so with an autoCompactWindow setting it read far too low. The helper
+    // also stands in a remembered window until the session's first reply finishes, since the
+    // panel only learns it from a result frame and the ring hides without one.
     name: "context-ring-window",
     // m(iOt,{usedTokens:e.usageData.value.totalTokens,contextWindow:DPt(e.usageData.value.contextWindow,e.usageData.value.maxOutputTokens),
-    anchor: /(usedTokens:([\w$]+)\.usageData\.value\.totalTokens,contextWindow:[\w$]+\()(\2\.usageData\.value\.contextWindow),/g,
-    replace: (_m, head, session, win) =>
-      `${head}(window.__ccWindow?window.__ccWindow(${session},${win}):${win}),`,
+    anchor: /(usedTokens:([\w$]+)\.usageData\.value\.totalTokens,contextWindow:)([\w$]+)\(\2\.usageData\.value\.contextWindow,\2\.usageData\.value\.maxOutputTokens\)/g,
+    replace: (_m, head, session, limit) =>
+      `${head}(window.__ccLimit?window.__ccLimit(${session},${limit}):${limit}(${session}.usageData.value.contextWindow,${session}.usageData.value.maxOutputTokens))`,
   },
   {
     // Draw that ring to the real percentage. Natively it picks one of three fixed shapes

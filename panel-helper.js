@@ -96,19 +96,30 @@ window.__ccRing=(p)=>{
 // (1M for Fable), but an autoCompactWindow setting makes the CLI compact against a smaller one,
 // so the ring read about half the real usage. The data behind /context has the window in force
 // (rawMaxTokens): ask for it once per session and model window, then redraw the ring.
-const wins=new WeakMap();
-window.__ccWindow=(s,w)=>{try{
-  if(!(w>0))return w;
+// The panel learns the window only from a finished turn's result frame, and transcripts hold
+// none, so the ring also hid in a new conversation, a resumed one, and every open one after a
+// window reload, until a reply finished. The last window seen is kept per session and overall,
+// and stands in until the session reports its own. `limit` is the panel's own formula.
+const wins=new WeakMap(),RK="cc-ring:session:",RL="cc-ring:last";
+prune(RK,500);
+const keepRing=(s,c)=>{const v={w:c.w,o:c.o,max:c.max},id=sid(s);if(id)save(RK+id,v);save(RL,{...v})};
+window.__ccLimit=(s,limit)=>{const u=s.usageData.value;try{
+  const w=u.contextWindow,o=u.maxOutputTokens,id=sid(s);
+  if(!(w>0)){const r=(id&&load(RK+id))||load(RL);return r?limit(r.max||r.w,r.o):limit(w,o)}
   let c=wins.get(s);
-  if(!c||c.w!==w){
-    c={w,max:0};wins.set(s,c);
-    s.getContextUsage().then((r)=>{
-      const m=r&&r.usage&&r.usage.rawMaxTokens;
-      if(m>0&&m!==w){c.max=m;s.usageData.value={...s.usageData.value}}
+  if(!c||c.w!==w||c.o!==o){
+    const r=(id&&load(RK+id))||load(RL);
+    c={w,o,max:r&&r.w===w?r.max:0};wins.set(s,c);keepRing(s,c);
+    s.getContextUsage().then((x)=>{
+      const m=x&&x.usage&&x.usage.rawMaxTokens;
+      if(!(m>0))return;
+      const max=m===w?0:m;
+      if(max!==c.max){c.max=max;s.usageData.value={...s.usageData.value}}
+      keepRing(s,c);
     }).catch(()=>{});
   }
-  return c.max||w;
-}catch(e){return w}};
+  return limit(c.max||w,o);
+}catch(e){return limit(u.contextWindow,u.maxOutputTokens)}};
 window.__ccPillDot=(d)=>d==="waiting"||d==="failed"||!current||!tasksOf(current)?d:"running";
 // Workflow-tool agents in the panel's own Agent map (the agents pill in the input footer).
 // The panel tracks only Agent-tool subagents there; a Workflow-tool run is one background task
