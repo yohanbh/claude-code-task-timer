@@ -389,34 +389,51 @@ window.__ccTree=(s,roots)=>{try{
 }catch(e){return roots}};
 // A row with tasks hanging below it, each drawn by the map's own agent row. The map centres each
 // row on its branch of agents, which a list under the row would knock out of line with the
-// connectors, so while the tree holds any tasks it is drawn top-aligned instead: every row at the
-// top of its branch, the connectors at row height. Trees without tasks keep the native look.
+// connectors, so the tree is drawn top-aligned instead: every row at the top of its branch, the
+// connectors at row height. The styles go in on the map's first row, tasks or not.
 // Class names are the map's own (hashed per release), so the styles are built from them.
 let styled="";
 const styleFor=(cls)=>{
   const key=cls.tree+cls.node;
   if(styled!==key){
     styled=key;
-    const T="."+cls.tree+":has(.cc-stack)",N="."+cls.node,C="."+cls.children,H="."+cls.child,mid="var(--cc-row-mid,23px)",line="var(--app-input-border)";
+    // Applies to every tree, with or without tasks, so the map looks the same either way. Rows
+    // are larger than the native ones (380px, the session row 400px, more padding), columns 48px
+    // apart, siblings 10px apart. Each rail runs unbroken through the gaps between siblings and
+    // ends in a rounded corner at the last one, instead of a square stub per row.
+    const T="."+cls.tree,N="."+cls.node,C="."+cls.children,H="."+cls.child,R="."+cls.row,M="."+cls.rowMain,mid="var(--cc-row-mid,23px)",line="var(--app-input-border)";
+    const corner="background:none;box-sizing:border-box;border-left:1px solid "+line+";border-bottom:1px solid "+line+";border-bottom-left-radius:6px";
     let el=document.getElementById("cc-task-styles");
     if(!el){el=document.createElement("style");el.id="cc-task-styles";document.head.appendChild(el)}
     el.textContent=[
+      // The modal may use the whole window; natively it stops at 1200px.
+      "[role=dialog]:has("+T+"){max-width:calc(100vw - 32px)!important}",
       T+" "+N+"{align-items:flex-start}",
-      T+" "+C+":before,"+T+" "+H+":before{top:"+mid+"}",
+      T+" "+N+">"+R+"{width:380px;padding:8px 12px;gap:3px}",
+      T+" "+N+">"+M+"{width:400px}",
+      T+" "+C+"{gap:10px;margin-left:48px}",
+      // Parent to rail: one line from the parent row to the rail, at row height (the session
+      // row's own stub is dropped, so the two never draw over each other).
+      T+" "+M+":after{display:none}",
+      T+" "+C+":before,"+T+" "+M+"+"+C+":before{display:block;top:"+mid+";left:-48px;width:24px}",
+      // Rail to each child, and the rail itself carried through the gap below each child.
+      T+" "+H+":before{top:"+mid+";left:-24px;width:24px}",
+      T+" "+H+":after{top:0;bottom:-10px;left:-24px}",
       T+" "+H+":first-child:after{top:"+mid+"}",
-      T+" "+H+":last-child:after{top:0;bottom:auto;height:"+mid+"}",
+      T+" "+H+":last-child:after{display:none}",
+      T+" "+H+":last-child:not(:first-child):before{top:0;height:calc("+mid+" + 1px);"+corner+"}",
       ".cc-stack{flex-direction:column;align-items:flex-start}",
       ".cc-stack.cc-main{position:sticky;z-index:1;top:0;bottom:0}",
-      ".cc-hang{display:flex;flex-direction:column;gap:8px;margin:8px 0 0 32px}",
-      // Indented by 32px, so 32px narrower than the row above (the map's rows are 300px, the
-      // session row 320px): the right edges line up and the connectors to the side still meet.
-      ".cc-hang "+N+">."+cls.row+"{width:268px}",
-      ".cc-main .cc-hang "+N+">."+cls.row+"{width:288px}",
+      // Tasks hang 28px in under their agent's row, 28px narrower so the right edges line up.
+      ".cc-hang{display:flex;flex-direction:column;gap:10px;margin:10px 0 0 28px}",
+      ".cc-hang "+N+">"+R+"{width:352px}",
+      ".cc-main .cc-hang "+N+">"+R+"{width:372px}",
       ".cc-task{position:relative}",
-      ".cc-task:before,.cc-task:after{content:\"\";position:absolute;background:"+line+";left:-16px}",
-      ".cc-task:before{height:1px;width:16px;top:50%}",
-      ".cc-task:after{width:1px;top:-8px;bottom:-8px}",
-      ".cc-task:last-child:after{bottom:50%}",
+      ".cc-task:before,.cc-task:after{content:\"\";position:absolute;background:"+line+";left:-14px}",
+      ".cc-task:before{height:1px;width:14px;top:50%}",
+      ".cc-task:after{width:1px;top:-10px;bottom:0}",
+      ".cc-task:last-child:after{display:none}",
+      ".cc-task:last-child:before{top:-10px;height:calc(50% + 11px);"+corner+"}",
     ].join("\n");
   }
   // Rows are two lines high; measure one so the connectors meet its middle at any font size.
@@ -426,8 +443,9 @@ const styleFor=(cls)=>{
   }catch(e){}});
 };
 window.__ccUnder=(row,tasks,jsx,Row,cls,waiting,pick,main)=>{try{
-  if(!tasks||!tasks.length||!jsx||!Row||!cls||!cls.node)return row;
+  if(!cls||!cls.node)return row;
   styleFor(cls);
+  if(!tasks||!tasks.length||!jsx||!Row)return row;
   return jsx("div",{className:cls.node+" cc-stack"+(main?" cc-main":""),children:[row,
     jsx("div",{className:"cc-hang",children:tasks.map((t)=>jsx("div",{className:"cc-task",children:
       jsx("div",{className:cls.node,children:jsx(Row,{agent:t,waiting,onClick:()=>pick(t.taskId)})})},t.taskId))})]});
